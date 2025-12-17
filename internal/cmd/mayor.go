@@ -62,11 +62,21 @@ var mayorStatusCmd = &cobra.Command{
 	RunE:  runMayorStatus,
 }
 
+var mayorRestartCmd = &cobra.Command{
+	Use:   "restart",
+	Short: "Restart the Mayor session",
+	Long: `Restart the Mayor tmux session.
+
+Stops the current session (if running) and starts a fresh one.`,
+	RunE: runMayorRestart,
+}
+
 func init() {
 	mayorCmd.AddCommand(mayorStartCmd)
 	mayorCmd.AddCommand(mayorStopCmd)
 	mayorCmd.AddCommand(mayorAttachCmd)
 	mayorCmd.AddCommand(mayorStatusCmd)
+	mayorCmd.AddCommand(mayorRestartCmd)
 
 	rootCmd.AddCommand(mayorCmd)
 }
@@ -207,4 +217,26 @@ func runMayorStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func runMayorRestart(cmd *cobra.Command, args []string) error {
+	t := tmux.NewTmux()
+
+	// Stop if running
+	running, err := t.HasSession(MayorSessionName)
+	if err != nil {
+		return fmt.Errorf("checking session: %w", err)
+	}
+	if running {
+		fmt.Println("Stopping Mayor session...")
+		t.SendKeysRaw(MayorSessionName, "C-c")
+		time.Sleep(100 * time.Millisecond)
+		if err := t.KillSession(MayorSessionName); err != nil {
+			return fmt.Errorf("killing session: %w", err)
+		}
+		fmt.Printf("%s Mayor session stopped.\n", style.Bold.Render("✓"))
+	}
+
+	// Start fresh
+	return runMayorStart(cmd, args)
 }
