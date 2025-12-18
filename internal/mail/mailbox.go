@@ -72,8 +72,8 @@ func (m *Mailbox) List() ([]*Message, error) {
 }
 
 func (m *Mailbox) listBeads() ([]*Message, error) {
-	// bd message inbox --json
-	cmd := exec.Command("bd", "message", "inbox", "--json")
+	// bd mail inbox --json
+	cmd := exec.Command("bd", "mail", "inbox", "--json")
 	cmd.Dir = m.workDir
 	cmd.Env = append(cmd.Environ(), "BD_IDENTITY="+m.identity)
 
@@ -173,7 +173,7 @@ func (m *Mailbox) Get(id string) (*Message, error) {
 }
 
 func (m *Mailbox) getBeads(id string) (*Message, error) {
-	cmd := exec.Command("bd", "message", "read", id, "--json")
+	cmd := exec.Command("bd", "mail", "read", id, "--json")
 	cmd.Dir = m.workDir
 
 	var stdout, stderr bytes.Buffer
@@ -221,7 +221,7 @@ func (m *Mailbox) MarkRead(id string) error {
 }
 
 func (m *Mailbox) markReadBeads(id string) error {
-	cmd := exec.Command("bd", "message", "ack", id)
+	cmd := exec.Command("bd", "mail", "ack", id)
 	cmd.Dir = m.workDir
 
 	var stderr bytes.Buffer
