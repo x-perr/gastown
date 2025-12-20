@@ -173,9 +173,23 @@ sync-branch: beads-sync    # Separate branch for beads commits
 
 **Why sync-branch?** When multiple agents share a beads database, using a dedicated sync branch prevents beads commits from interleaving with code commits on feature branches.
 
-#### Beads as Universal Data Plane
+#### Beads as Universal Data Plane (and Control Plane)
 
-Beads is the data plane for ALL Gas Town operations. Everything flows through beads:
+Beads is the data plane for ALL Gas Town operations. Everything flows through beads.
+
+**Key architectural insight**: Gas Town intentionally blurs the line between data plane and control plane. In traditional systems:
+- **Data plane**: Stores information (issues, messages)
+- **Control plane**: Coordinates behavior (what to do next, who does what)
+
+In Gas Town, **the control state IS data in beads**. Molecule steps, dependencies, and status ARE the control plane. Agents read beads to know what to do next.
+
+This intentional blur provides:
+- **Fault tolerance**: Control state survives agent crashes (it's in beads, not agent memory)
+- **Observability**: `bd list` shows the full system state
+- **Decentralization**: Each agent reads its own state from beads
+- **Recovery**: Restart = re-read beads = continue from where you left off
+
+There is no separate orchestrator maintaining workflow state. Beads IS the orchestrator.
 
 | Category | Description | Status |
 |----------|-------------|--------|
@@ -386,12 +400,22 @@ gt spawn --issue gt-xyz --molecule mol-engineer-in-box
 
 ### Why Molecules?
 
-1. **Quality gates**: Every polecat follows the same review/test workflow
-2. **Error isolation**: Each step is a checkpoint; failures don't lose prior work
-3. **Parallelism**: Independent steps can run in parallel across workers
-4. **Auditability**: Full history of who did what step, when
-5. **Composability**: Build complex workflows from simple building blocks
-6. **Resumability**: Any worker can continue where another left off
+**The core value proposition: Nondeterministic Idempotence**
+
+Molecules guarantee that any workflow, once started, will eventually complete correctly - even through crashes, context compaction, and agent restarts. This is what enables Gas Town to run autonomously for extended periods.
+
+1. **Crash recovery**: Agent dies mid-workflow? Restart and continue from last completed step. No work is lost.
+2. **Context survival**: Claude's context compacts? Agent re-reads molecule state from beads and knows exactly where it was.
+3. **Quality gates**: Every polecat follows the same review/test workflow, enforced by molecule structure.
+4. **Error isolation**: Each step is a checkpoint; failures are contained, not cascading.
+5. **Parallelism**: Independent steps can run in parallel across workers.
+6. **Auditability**: Full history of who did what step, when - queryable in beads.
+7. **Composability**: Build complex workflows from simple building blocks.
+8. **Resumability**: Any worker can continue where another left off.
+
+**Without molecules**: Agents are prompted with instructions, work from memory, and lose state on restart. Autonomous operation is impossible.
+
+**With molecules**: Agents follow persistent TODO lists that survive anything. Work completion is guaranteed.
 
 ### Molecule vs Template
 
@@ -402,6 +426,143 @@ Beads has two related concepts:
 Both use similar structures but different semantics:
 - Templates focus on parameterization (`{{variable}}` substitution)
 - Molecules focus on execution (step states, nondeterministic dispatch)
+
+### Operational Molecules
+
+Molecules aren't just for implementing features. Any multi-step process that requires cognition, can fail partway through, or needs to survive agent restarts should be a molecule.
+
+**The key insight**: By encoding operational workflows as molecules, Gas Town gains **nondeterministic idempotence** for system operations, not just work. An agent can crash mid-startup, restart, read its molecule state, and continue from the last completed step.
+
+#### mol-polecat-work
+
+The full polecat lifecycle, not just "do the issue":
+
+```markdown
+## Molecule: polecat-work
+Full polecat lifecycle from assignment to decommission.
+
+## Step: load-context
+Run gt prime and bd prime. Verify issue assignment.
+Check inbox for any relevant messages.
+
+## Step: implement
+Implement the solution. Follow codebase conventions.
+File discovered work as new issues.
+Needs: load-context
+
+## Step: self-review
+Review your own changes. Look for bugs, style issues,
+missing error handling, security concerns.
+Needs: implement
+
+## Step: verify-tests
+Run existing tests. Add new tests for new functionality.
+Ensure adequate coverage.
+Needs: implement
+
+## Step: rebase-main
+Rebase against main to incorporate any changes.
+Resolve conflicts if needed.
+Needs: self-review, verify-tests
+
+## Step: submit-merge
+Submit to merge queue. Create PR if needed.
+Verify CI passes.
+Needs: rebase-main
+
+## Step: update-handoff
+Update handoff bead with final state.
+File any remaining work as issues.
+Needs: submit-merge
+
+## Step: request-shutdown
+Send shutdown request to Witness.
+Wait for termination.
+Needs: update-handoff
+```
+
+**Why this matters**: A polecat that crashes after step 4 doesn't lose work. On restart, it reads molecule state, sees "verify-tests: completed, rebase-main: pending", and continues rebasing.
+
+#### mol-rig-activate
+
+Activating a rig for work:
+
+```markdown
+## Molecule: rig-activate
+Activate a rig and spawn workers.
+
+## Step: verify-rig
+Check rig exists and is properly configured.
+Verify git remote is accessible.
+
+## Step: start-witness
+Start Witness if not running.
+Verify Witness is healthy.
+Needs: verify-rig
+
+## Step: start-refinery
+Start Refinery if not running.
+Verify Refinery is healthy.
+Needs: verify-rig
+
+## Step: sync-beads
+Sync beads from remote.
+Resolve any conflicts.
+Needs: start-witness
+
+## Step: identify-ready
+Query bd ready for available work.
+Prioritize by issue priority.
+Needs: sync-beads
+
+## Step: spawn-workers
+Spawn polecats for ready issues.
+Respect max_workers limit.
+Needs: identify-ready, start-refinery
+```
+
+#### mol-graceful-shutdown
+
+Shutting down Gas Town properly:
+
+```markdown
+## Molecule: graceful-shutdown
+Graceful shutdown with handoff preservation.
+
+## Step: notify-agents
+Send shutdown notification to all agents.
+Record which agents acknowledged.
+
+## Step: wait-handoffs
+Wait for agents to update handoff beads.
+Track completion status.
+Needs: notify-agents
+
+## Step: verify-clean
+Verify all git states are clean.
+Check for uncommitted work.
+Needs: wait-handoffs
+
+## Step: kill-workers
+Terminate polecat sessions.
+Remove worktrees.
+Needs: verify-clean
+
+## Step: kill-core
+Terminate Witness, Refinery, Mayor, Deacon.
+In correct order.
+Needs: kill-workers
+
+## Step: final-sync
+Final beads sync to preserve state.
+Needs: kill-core
+```
+
+**Key principle**: If a multi-step process requires cognition and can fail partway through, it should be a molecule. This applies to:
+- Agent lifecycle (startup, work, shutdown)
+- System operations (activation, deactivation)
+- Batch processing (swarm coordination)
+- Recovery procedures (doctor --fix)
 
 ## Directory Structure
 
