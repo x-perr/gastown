@@ -374,12 +374,6 @@ func (g *Git) DeleteBranch(name string, force bool) error {
 	return err
 }
 
-// DeleteRemoteBranch deletes a branch from the remote.
-func (g *Git) DeleteRemoteBranch(remote, branch string) error {
-	_, err := g.run("push", remote, "--delete", branch)
-	return err
-}
-
 // Rev returns the commit hash for the given ref.
 func (g *Git) Rev(ref string) (string, error) {
 	return g.run("rev-parse", ref)
