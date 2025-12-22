@@ -61,6 +61,13 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	d.Register(doctor.NewBranchCheck())
 	d.Register(doctor.NewBeadsSyncOrphanCheck())
 
+	// Ephemeral beads checks
+	d.Register(doctor.NewEphemeralExistsCheck())
+	d.Register(doctor.NewEphemeralGitCheck())
+	d.Register(doctor.NewEphemeralOrphansCheck())
+	d.Register(doctor.NewEphemeralSizeCheck())
+	d.Register(doctor.NewEphemeralStaleCheck())
+
 	// Run checks
 	var report *doctor.Report
 	if doctorFix {
