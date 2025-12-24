@@ -1,0 +1,31 @@
+formula: security-audit
+type: aspect
+description: >
+  Cross-cutting security concern. Applies security scanning before and
+  after implementation steps.
+version: 1
+pointcuts:
+  - glob: "*.implement"
+  - glob: "*.submit"
+advice:
+  around:
+    before:
+      - id: security-prescan
+        description: >
+          Pre-implementation security check. Review for secrets/credentials
+          in scope. Check dependencies for known vulnerabilities.
+        args:
+          target: "{step.id}"
+    after:
+      - id: security-postscan
+        description: >
+          Post-implementation security scan. Scan new code for vulnerabilities
+          (SAST). Check for hardcoded secrets. Review for OWASP Top 10 issues.
+        args:
+          target: "{step.id}"
+        output:
+          approved: boolean
+          findings: list
+      - gate:
+          condition: "security-postscan.output.approved == true"
+          message: Security approval required before proceeding

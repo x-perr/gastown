@@ -1,0 +1,39 @@
+formula: shiny
+description: >
+  Engineer in a Box - the canonical right way. Design before you code.
+  Review before you ship. Test before you submit.
+version: 1
+vars:
+  feature: "{{feature}}"
+  assignee: "{{assignee}}"
+steps:
+  - id: design
+    description: >
+      Think carefully about architecture before writing code. Consider:
+      How does this fit into the existing system? What are the edge cases?
+      What could go wrong? Is there a simpler approach?
+
+  - id: implement
+    description: >
+      Write the code for {{feature}}. Follow the design. Keep it simple.
+      Don't gold-plate.
+    needs: [design]
+
+  - id: review
+    description: >
+      Review the implementation. Check for: Does it match the design?
+      Are there obvious bugs? Is it readable and maintainable?
+      Are there security concerns?
+    needs: [implement]
+
+  - id: test
+    description: >
+      Write and run tests. Unit tests for new code, integration tests
+      if needed, run the full test suite, fix any regressions.
+    needs: [review]
+
+  - id: submit
+    description: >
+      Submit for merge. Final check: git status, git diff. Commit with
+      clear message. Push and create PR.
+    needs: [test]

@@ -1,0 +1,45 @@
+formula: shiny-enterprise
+extends: shiny
+description: >
+  Enterprise-grade engineering workflow. Shiny + Rule of Five + Security +
+  Performance Testing + Review Loop.
+version: 1
+compose:
+  - expand:
+      target: implement
+      with: rule-of-five
+
+  - aspect:
+      pointcut: "implement.*"
+      with: security-audit
+
+  - gate:
+      before: submit
+      condition: "security-postscan.approved == true"
+      message: Cannot submit without security approval
+
+  - branch:
+      from: implement.refine-4
+      steps:
+        - id: perf-test
+          description: Run performance benchmarks
+        - id: load-test
+          description: Run load/stress tests
+        - id: chaos-test
+          description: Run chaos engineering tests
+      join: review
+
+  - loop:
+      step: review
+      until: "review.output.approved == true"
+      max: 3
+      on-max: escalate
+
+  - advice:
+      target: "*"
+      before:
+        id: log-start
+        description: "Log: Starting {step.id}"
+      after:
+        id: log-end
+        description: "Log: Completed {step.id}"

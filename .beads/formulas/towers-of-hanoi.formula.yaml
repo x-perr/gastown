@@ -1,0 +1,101 @@
+# Towers of Hanoi Formula
+#
+# Demonstrates that molecule algebra solves the "million step workflow" problem.
+# LLMs fail on long sequences because errors accumulate (99.9%^1000 ≈ 37% success).
+# MAKER used voting to reduce error. We use mechanical structure instead.
+#
+# Key insight: The move sequence is deterministic. Only execution needs AI.
+# And each step is trivial: "move disk X from peg Y to peg Z".
+#
+# For n disks: 2^n - 1 moves
+# 20 disks = 1,048,575 moves (the "million step" problem)
+#
+# The iterative algorithm (no recursion needed):
+# For move k (1-indexed):
+#   - disk = largest power of 2 dividing k (disk 1 is smallest)
+#   - direction = computed from disk parity and move number
+#
+# This formula uses for-each to generate all moves at cook time.
+
+formula: towers-of-hanoi
+description: >
+  Solve Towers of Hanoi for {disks} disks. Generates 2^{disks} - 1 steps,
+  each a trivial move operation. Demonstrates mechanical structure generation
+  for arbitrarily long workflows.
+version: 1
+
+vars:
+  disks: "{{disks}}"
+  source_peg: "A"
+  target_peg: "C"
+  auxiliary_peg: "B"
+
+# The magic: for-each over computed move sequence
+# Each move is deterministic, computed from move number
+generate:
+  # This is pseudo-syntax for the runtime expansion we'd need
+  for-each:
+    var: move_num
+    range: "1..2^{disks}"  # 1 to 2^n - 1
+  step:
+    id: "move-{move_num}"
+    description: >
+      Move {computed_disk} from {computed_source} to {computed_target}.
+
+      This is move {move_num} of {total_moves}.
+      Simply execute the move - no decision needed.
+    needs:
+      - "move-{move_num - 1}"  # Sequential dependency
+    compute:
+      # Disk to move: position of lowest set bit in move_num
+      disk: "lowest_set_bit({move_num})"
+      # Peg calculations based on disk parity and move number
+      source: "peg_for_disk({disk}, {move_num}, 'source')"
+      target: "peg_for_disk({disk}, {move_num}, 'target')"
+
+# Alternatively, simpler recursive template for smaller N:
+# (This would need the recursive expansion operator)
+
+steps:
+  - id: setup
+    description: >
+      Verify initial state: {disks} disks stacked on peg {source_peg}.
+      All disks in order (largest on bottom).
+
+  - id: solve
+    description: >
+      Execute all {total_moves} moves to transfer tower from
+      {source_peg} to {target_peg}.
+    needs: [setup]
+    # This step would be expanded by the generate block above
+
+  - id: verify
+    description: >
+      Verify final state: all {disks} disks now on peg {target_peg}.
+      Tower intact, all moves were legal.
+    needs: [solve]
+
+# For the prototype, let's show a 3-disk example (7 moves):
+example_3_disk:
+  # Move sequence for 3 disks: A→C, A→B, C→B, A→C, B→A, B→C, A→C
+  steps:
+    - id: move-1
+      description: "Move disk 1 from A to C"
+    - id: move-2
+      description: "Move disk 2 from A to B"
+      needs: [move-1]
+    - id: move-3
+      description: "Move disk 1 from C to B"
+      needs: [move-2]
+    - id: move-4
+      description: "Move disk 3 from A to C"
+      needs: [move-3]
+    - id: move-5
+      description: "Move disk 1 from B to A"
+      needs: [move-4]
+    - id: move-6
+      description: "Move disk 2 from B to C"
+      needs: [move-5]
+    - id: move-7
+      description: "Move disk 1 from A to C"
+      needs: [move-6]
