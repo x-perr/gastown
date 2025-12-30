@@ -2,7 +2,6 @@
 package cmd
 
 import (
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -29,11 +28,18 @@ across distributed teams of AI agents working on shared codebases.`,
 	},
 }
 
-// Execute runs the root command
-func Execute() {
+// Execute runs the root command and returns an exit code.
+// The caller (main) should call os.Exit with this code.
+func Execute() int {
 	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
+		// Check for silent exit (scripting commands that signal status via exit code)
+		if code, ok := IsSilentExit(err); ok {
+			return code
+		}
+		// Other errors already printed by cobra
+		return 1
 	}
+	return 0
 }
 
 // Command group IDs - used by subcommands to organize help output

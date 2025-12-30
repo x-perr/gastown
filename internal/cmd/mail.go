@@ -579,23 +579,20 @@ func runMailPeek(cmd *cobra.Command, args []string) error {
 	// All mail uses town beads (two-level architecture)
 	workDir, err := findMailWorkDir()
 	if err != nil {
-		os.Exit(1) // Silent exit - no workspace
-		return nil
+		return NewSilentExit(1) // Silent exit - no workspace
 	}
 
 	// Get mailbox
 	router := mail.NewRouter(workDir)
 	mailbox, err := router.GetMailbox(address)
 	if err != nil {
-		os.Exit(1) // Silent exit - can't access mailbox
-		return nil
+		return NewSilentExit(1) // Silent exit - can't access mailbox
 	}
 
 	// Get unread messages
 	messages, err := mailbox.ListUnread()
 	if err != nil || len(messages) == 0 {
-		os.Exit(1) // Silent exit - no unread
-		return nil
+		return NewSilentExit(1) // Silent exit - no unread
 	}
 
 	// Show first unread message
@@ -923,12 +920,10 @@ func runMailCheck(cmd *cobra.Command, args []string) error {
 	// Normal mode
 	if unread > 0 {
 		fmt.Printf("%s %d unread message(s)\n", style.Bold.Render("📬"), unread)
-		os.Exit(0)
-	} else {
-		fmt.Println("No new mail")
-		os.Exit(1)
+		return NewSilentExit(0)
 	}
-	return nil
+	fmt.Println("No new mail")
+	return NewSilentExit(1)
 }
 
 func runMailThread(cmd *cobra.Command, args []string) error {
