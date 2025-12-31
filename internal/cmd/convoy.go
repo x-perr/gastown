@@ -193,15 +193,7 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("creating convoy: %w (%s)", err, strings.TrimSpace(stderr.String()))
 	}
 
-	// Store notify address in slot if specified (for convoy-cleanup to read)
-	if convoyNotify != "" {
-		slotArgs := []string{"slot", "set", convoyID, "notify", convoyNotify}
-		slotCmd := exec.Command("bd", slotArgs...)
-		slotCmd.Dir = townBeads
-		if err := slotCmd.Run(); err != nil {
-			style.PrintWarning("couldn't set notify slot: %v", err)
-		}
-	}
+	// Notify address is stored in description (line 166-168) and read from there
 
 	// Add 'tracks' relations for each tracked issue
 	trackedCount := 0
