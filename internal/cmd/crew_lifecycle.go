@@ -9,12 +9,14 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/crew"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 func runCrewRemove(cmd *cobra.Command, args []string) error {
@@ -80,8 +82,13 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 			style.Bold.Render("✓"), r.Name, name)
 
 		// Close the agent bead if it exists
-		// Format: gt-<rig>-crew-<name> (matches session name format)
-		agentBeadID := fmt.Sprintf("gt-%s-crew-%s", r.Name, name)
+		// Use the rig's configured prefix (e.g., "gt" for gastown, "bd" for beads)
+		townRoot, _ := workspace.Find(r.Path)
+		if townRoot == "" {
+			townRoot = r.Path
+		}
+		prefix := beads.GetPrefixForRig(townRoot, r.Name)
+		agentBeadID := beads.CrewBeadIDWithPrefix(prefix, r.Name, name)
 		closeCmd := exec.Command("bd", "close", agentBeadID, "--reason=Crew workspace removed")
 		closeCmd.Dir = r.Path // Run from rig directory for proper beads resolution
 		if output, err := closeCmd.CombinedOutput(); err != nil {

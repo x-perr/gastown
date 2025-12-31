@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -386,8 +387,15 @@ type agentBeadResponse struct {
 // ZFC #10: This enables the Witness to verify it's safe to nuke before proceeding.
 // The polecat self-reports its git state when running `gt done`, and we trust that report.
 func getCleanupStatus(workDir, rigName, polecatName string) string {
-	// Construct agent bead ID: gt-<rigName>-polecat-<polecatName>
-	agentBeadID := fmt.Sprintf("gt-%s-polecat-%s", rigName, polecatName)
+	// Construct agent bead ID using the rig's configured prefix
+	// This supports non-gt prefixes like "bd-" for the beads rig
+	townRoot, err := workspace.Find(workDir)
+	if err != nil || townRoot == "" {
+		// Fall back to default prefix
+		townRoot = workDir
+	}
+	prefix := beads.GetPrefixForRig(townRoot, rigName)
+	agentBeadID := beads.PolecatBeadIDWithPrefix(prefix, rigName, polecatName)
 
 	cmd := exec.Command("bd", "show", agentBeadID, "--json")
 	cmd.Dir = workDir
