@@ -164,6 +164,7 @@ type MRFields struct {
 	Rig         string // Which rig
 	MergeCommit string // SHA of merge commit (set on close)
 	CloseReason string // Reason for closing: merged, rejected, conflict, superseded
+	AgentBead   string // Agent bead ID that created this MR (for traceability)
 }
 
 // ParseMRFields extracts structured merge-request fields from an issue's description.
@@ -218,6 +219,9 @@ func ParseMRFields(issue *Issue) *MRFields {
 		case "close_reason", "close-reason", "closereason":
 			fields.CloseReason = value
 			hasFields = true
+		case "agent_bead", "agent-bead", "agentbead":
+			fields.AgentBead = value
+			hasFields = true
 		}
 	}
 
@@ -257,6 +261,9 @@ func FormatMRFields(fields *MRFields) string {
 	if fields.CloseReason != "" {
 		lines = append(lines, "close_reason: "+fields.CloseReason)
 	}
+	if fields.AgentBead != "" {
+		lines = append(lines, "agent_bead: "+fields.AgentBead)
+	}
 
 	return strings.Join(lines, "\n")
 }
@@ -284,6 +291,9 @@ func SetMRFields(issue *Issue, fields *MRFields) string {
 		"close_reason": true,
 		"close-reason": true,
 		"closereason":  true,
+		"agent_bead":   true,
+		"agent-bead":   true,
+		"agentbead":    true,
 	}
 
 	// Collect non-MR lines from existing description

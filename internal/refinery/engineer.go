@@ -262,6 +262,13 @@ func (e *Engineer) handleSuccess(mr *beads.Issue, result ProcessResult) {
 		}
 	}
 
+	// 3.5. Clear agent bead's active_mr reference (traceability cleanup)
+	if mrFields.AgentBead != "" {
+		if err := e.beads.UpdateAgentActiveMR(mrFields.AgentBead, ""); err != nil {
+			fmt.Fprintf(e.output, "[Engineer] Warning: failed to clear agent bead %s active_mr: %v\n", mrFields.AgentBead, err)
+		}
+	}
+
 	// 4. Delete source branch if configured (local only - branches never go to origin)
 	if e.config.DeleteMergedBranches && mrFields.Branch != "" {
 		if err := e.git.DeleteBranch(mrFields.Branch, true); err != nil {
@@ -325,6 +332,13 @@ func (e *Engineer) handleSuccessFromQueue(mr *mrqueue.MR, result ProcessResult) 
 			fmt.Fprintf(e.output, "[Engineer] Warning: failed to close source issue %s: %v\n", mr.SourceIssue, err)
 		} else {
 			fmt.Fprintf(e.output, "[Engineer] Closed source issue: %s\n", mr.SourceIssue)
+		}
+	}
+
+	// 1.5. Clear agent bead's active_mr reference (traceability cleanup)
+	if mr.AgentBead != "" {
+		if err := e.beads.UpdateAgentActiveMR(mr.AgentBead, ""); err != nil {
+			fmt.Fprintf(e.output, "[Engineer] Warning: failed to clear agent bead %s active_mr: %v\n", mr.AgentBead, err)
 		}
 	}
 

@@ -108,6 +108,19 @@ func runDone(cmd *cobra.Command, args []string) error {
 		polecatName = parts[len(parts)-1]
 	}
 
+	// Get agent bead ID for cross-referencing
+	var agentBeadID string
+	if roleInfo, err := GetRoleWithContext(cwd, townRoot); err == nil {
+		ctx := RoleContext{
+			Role:     roleInfo.Role,
+			Rig:      roleInfo.Rig,
+			Polecat:  roleInfo.Polecat,
+			TownRoot: townRoot,
+			WorkDir:  cwd,
+		}
+		agentBeadID = getAgentBeadID(ctx)
+	}
+
 	// For COMPLETED, we need an issue ID and branch must not be main
 	var mrID string
 	if exitType == ExitCompleted {
@@ -173,6 +186,9 @@ func runDone(cmd *cobra.Command, args []string) error {
 			if worker != "" {
 				description += fmt.Sprintf("\nworker: %s", worker)
 			}
+			if agentBeadID != "" {
+				description += fmt.Sprintf("\nagent_bead: %s", agentBeadID)
+			}
 
 			// Create MR bead (ephemeral wisp - will be cleaned up after merge)
 			mrIssue, err := bd.Create(beads.CreateOptions{
@@ -185,6 +201,13 @@ func runDone(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("creating merge request bead: %w", err)
 			}
 			mrID = mrIssue.ID
+
+			// Update agent bead with active_mr reference (for traceability)
+			if agentBeadID != "" {
+				if err := bd.UpdateAgentActiveMR(agentBeadID, mrID); err != nil {
+					style.PrintWarning("could not update agent bead with active_mr: %v", err)
+				}
+			}
 
 			// Success output
 			fmt.Printf("%s Work submitted to merge queue\n", style.Bold.Render("✓"))

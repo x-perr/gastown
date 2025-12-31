@@ -706,6 +706,7 @@ type AgentFields struct {
 	HookBead      string // Currently pinned work bead ID
 	RoleBead      string // Role definition bead ID (canonical location; may not exist yet)
 	CleanupStatus string // ZFC: polecat self-reports git state (clean, has_uncommitted, has_stash, has_unpushed)
+	ActiveMR      string // Currently active merge request bead ID (for traceability)
 }
 
 // FormatAgentDescription creates a description string from agent fields.
@@ -745,6 +746,12 @@ func FormatAgentDescription(title string, fields *AgentFields) string {
 		lines = append(lines, "cleanup_status: null")
 	}
 
+	if fields.ActiveMR != "" {
+		lines = append(lines, fmt.Sprintf("active_mr: %s", fields.ActiveMR))
+	} else {
+		lines = append(lines, "active_mr: null")
+	}
+
 	return strings.Join(lines, "\n")
 }
 
@@ -782,6 +789,8 @@ func ParseAgentFields(description string) *AgentFields {
 			fields.RoleBead = value
 		case "cleanup_status":
 			fields.CleanupStatus = value
+		case "active_mr":
+			fields.ActiveMR = value
 		}
 	}
 
@@ -889,6 +898,26 @@ func (b *Beads) UpdateAgentCleanupStatus(id string, cleanupStatus string) error 
 	// Parse existing fields
 	fields := ParseAgentFields(issue.Description)
 	fields.CleanupStatus = cleanupStatus
+
+	// Format new description
+	description := FormatAgentDescription(issue.Title, fields)
+
+	return b.Update(id, UpdateOptions{Description: &description})
+}
+
+// UpdateAgentActiveMR updates the active_mr field in an agent bead.
+// This links the agent to their current merge request for traceability.
+// Pass empty string to clear the field (e.g., after merge completes).
+func (b *Beads) UpdateAgentActiveMR(id string, activeMR string) error {
+	// First get current issue to preserve other fields
+	issue, err := b.Show(id)
+	if err != nil {
+		return err
+	}
+
+	// Parse existing fields
+	fields := ParseAgentFields(issue.Description)
+	fields.ActiveMR = activeMR
 
 	// Format new description
 	description := FormatAgentDescription(issue.Title, fields)

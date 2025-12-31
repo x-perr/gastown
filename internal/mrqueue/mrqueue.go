@@ -26,6 +26,7 @@ type MR struct {
 	Title       string    `json:"title"`        // MR title
 	Priority    int       `json:"priority"`     // Priority (lower = higher priority)
 	CreatedAt   time.Time `json:"created_at"`
+	AgentBead   string    `json:"agent_bead,omitempty"` // Agent bead ID that created this MR (for traceability)
 }
 
 // Queue manages the MR storage.
