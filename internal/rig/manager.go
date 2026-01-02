@@ -264,6 +264,17 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 			if err := m.saveRigConfig(rigPath, rigConfig); err != nil {
 				return nil, fmt.Errorf("updating rig config with detected prefix: %w", err)
 			}
+			// Initialize bd database with the detected prefix.
+			// beads.db is gitignored so it doesn't exist after clone - we need to create it.
+			// bd init --prefix will create the database and auto-import from issues.jsonl.
+			sourceBeadsDB := filepath.Join(mayorRigPath, ".beads", "beads.db")
+			if _, err := os.Stat(sourceBeadsDB); os.IsNotExist(err) {
+				cmd := exec.Command("bd", "init", "--prefix", sourcePrefix)
+				cmd.Dir = mayorRigPath
+				if output, err := cmd.CombinedOutput(); err != nil {
+					fmt.Printf("  Warning: Could not init bd database: %v (%s)\n", err, strings.TrimSpace(string(output)))
+				}
+			}
 		}
 	}
 
@@ -471,9 +482,16 @@ func (m *Manager) initBeads(rigPath, prefix string) error {
 //
 // Agent beads track lifecycle state for ZFC compliance (gt-h3hak, gt-pinkq).
 func (m *Manager) initAgentBeads(rigPath, rigName, prefix string, isFirstRig bool) error {
-	// Run bd commands from rig root where .beads/ was initialized
-	// Set BEADS_DIR explicitly to ensure bd finds the database
-	beadsDir := filepath.Join(rigPath, ".beads")
+	// Run bd commands from the canonical beads location.
+	// - If source repo has .beads/ tracked (mayor/rig/.beads exists), use that
+	// - Otherwise use rig root .beads/ (created by initBeads during rig add)
+	mayorRigBeads := filepath.Join(rigPath, "mayor", "rig", ".beads")
+	var beadsDir string
+	if _, err := os.Stat(mayorRigBeads); err == nil {
+		beadsDir = mayorRigBeads
+	} else {
+		beadsDir = filepath.Join(rigPath, ".beads")
+	}
 	prevBeadsDir, hadBeadsDir := os.LookupEnv("BEADS_DIR")
 	if err := os.Setenv("BEADS_DIR", beadsDir); err != nil {
 		return fmt.Errorf("setting BEADS_DIR: %w", err)
