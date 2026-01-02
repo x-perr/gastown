@@ -225,7 +225,7 @@ func (c *OrphanSessionCheck) isValidSession(sess string, validRigs []string, may
 	return true
 }
 
-// OrphanProcessCheck detects orphaned Claude/claude-code processes
+// OrphanProcessCheck detects orphaned runtime processes
 // that are not associated with a Gas Town tmux session.
 type OrphanProcessCheck struct {
 	FixableCheck
@@ -238,13 +238,13 @@ func NewOrphanProcessCheck() *OrphanProcessCheck {
 		FixableCheck: FixableCheck{
 			BaseCheck: BaseCheck{
 				CheckName:        "orphan-processes",
-				CheckDescription: "Detect orphaned Claude processes",
+				CheckDescription: "Detect orphaned runtime processes",
 			},
 		},
 	}
 }
 
-// Run checks for orphaned Claude processes.
+// Run checks for orphaned runtime processes.
 func (c *OrphanProcessCheck) Run(ctx *CheckContext) *CheckResult {
 	// Get list of tmux session PIDs
 	tmuxPIDs, err := c.getTmuxSessionPIDs()
@@ -257,30 +257,30 @@ func (c *OrphanProcessCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
-	// Find Claude processes
-	claudeProcs, err := c.findClaudeProcesses()
+	// Find runtime processes
+	runtimeProcs, err := c.findRuntimeProcesses()
 	if err != nil {
 		return &CheckResult{
 			Name:    c.Name(),
 			Status:  StatusWarning,
-			Message: "Could not list Claude processes",
+			Message: "Could not list runtime processes",
 			Details: []string{err.Error()},
 		}
 	}
 
-	if len(claudeProcs) == 0 {
+	if len(runtimeProcs) == 0 {
 		return &CheckResult{
 			Name:    c.Name(),
 			Status:  StatusOK,
-			Message: "No Claude processes found",
+			Message: "No runtime processes found",
 		}
 	}
 
-	// Check which Claude processes are orphaned
+	// Check which runtime processes are orphaned
 	var orphans []processInfo
 	var validCount int
 
-	for _, proc := range claudeProcs {
+	for _, proc := range runtimeProcs {
 		if c.isOrphanProcess(proc, tmuxPIDs) {
 			orphans = append(orphans, proc)
 		} else {
@@ -298,7 +298,7 @@ func (c *OrphanProcessCheck) Run(ctx *CheckContext) *CheckResult {
 		return &CheckResult{
 			Name:    c.Name(),
 			Status:  StatusOK,
-			Message: fmt.Sprintf("All %d Claude processes have valid parents", validCount),
+			Message: fmt.Sprintf("All %d runtime processes have valid parents", validCount),
 		}
 	}
 
@@ -310,7 +310,7 @@ func (c *OrphanProcessCheck) Run(ctx *CheckContext) *CheckResult {
 	return &CheckResult{
 		Name:    c.Name(),
 		Status:  StatusWarning,
-		Message: fmt.Sprintf("Found %d orphaned Claude process(es)", len(orphans)),
+		Message: fmt.Sprintf("Found %d orphaned runtime process(es)", len(orphans)),
 		Details: details,
 		FixHint: "Run 'gt doctor --fix' to kill orphaned processes",
 	}
@@ -462,21 +462,20 @@ func (c *OrphanProcessCheck) getTmuxSessionPIDs() (map[int]bool, error) { //noli
 	return pids, nil
 }
 
-// findClaudeProcesses finds all running claude/claude-code CLI processes.
+// findRuntimeProcesses finds all running runtime CLI processes.
 // Excludes Claude.app desktop application and its helpers.
-func (c *OrphanProcessCheck) findClaudeProcesses() ([]processInfo, error) {
+func (c *OrphanProcessCheck) findRuntimeProcesses() ([]processInfo, error) {
 	var procs []processInfo
 
-	// Use ps to find claude processes
-	// Look for both "claude" and "claude-code" in command
+	// Use ps to find runtime processes
 	out, err := exec.Command("ps", "-eo", "pid,ppid,comm").Output()
 	if err != nil {
 		return nil, err
 	}
 
-	// Regex to match claude CLI processes (not Claude.app)
-	// Match: "claude" or paths ending in "/claude"
-	claudePattern := regexp.MustCompile(`(?i)(^claude$|/claude$)`)
+	// Regex to match runtime CLI processes (not Claude.app)
+	// Match: "claude", "claude-code", or "codex" (or paths ending in those)
+	runtimePattern := regexp.MustCompile(`(?i)(^claude$|/claude$|^claude-code$|/claude-code$|^codex$|/codex$)`)
 
 	// Pattern to exclude Claude.app and related desktop processes
 	excludePattern := regexp.MustCompile(`(?i)(Claude\.app|claude-native|chrome-native)`)
@@ -487,7 +486,7 @@ func (c *OrphanProcessCheck) findClaudeProcesses() ([]processInfo, error) {
 			continue
 		}
 
-		// Check if command matches claude CLI
+		// Check if command matches runtime CLI
 		cmd := strings.Join(fields[2:], " ")
 
 		// Skip desktop app processes
@@ -495,8 +494,8 @@ func (c *OrphanProcessCheck) findClaudeProcesses() ([]processInfo, error) {
 			continue
 		}
 
-		// Only match CLI claude processes
-		if !claudePattern.MatchString(cmd) {
+		// Only match CLI runtime processes
+		if !runtimePattern.MatchString(cmd) {
 			continue
 		}
 
@@ -518,7 +517,7 @@ func (c *OrphanProcessCheck) findClaudeProcesses() ([]processInfo, error) {
 	return procs, nil
 }
 
-// isOrphanProcess checks if a Claude process is orphaned.
+// isOrphanProcess checks if a runtime process is orphaned.
 // A process is orphaned if its parent (or ancestor) is not a tmux session.
 func (c *OrphanProcessCheck) isOrphanProcess(proc processInfo, tmuxPIDs map[int]bool) bool {
 	// Walk up the process tree looking for a tmux parent

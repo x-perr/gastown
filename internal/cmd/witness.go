@@ -5,8 +5,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/runtime"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/witness"
@@ -260,6 +267,87 @@ func runWitnessStatus(cmd *cobra.Command, args []string) error {
 // witnessSessionName returns the tmux session name for a rig's witness.
 func witnessSessionName(rigName string) string {
 	return fmt.Sprintf("gt-%s-witness", rigName)
+}
+
+// ensureWitnessSession creates a witness tmux session if it doesn't exist.
+// Returns true if a new session was created, false if it already existed.
+func ensureWitnessSession(rigName string, r *rig.Rig) (bool, error) {
+	t := tmux.NewTmux()
+	sessionName := witnessSessionName(rigName)
+
+	// Check if session already exists
+	running, err := t.HasSession(sessionName)
+	if err != nil {
+		return false, fmt.Errorf("checking session: %w", err)
+	}
+
+	if running {
+		return false, nil
+	}
+
+	// Working directory is the witness's rig clone (if it exists) or witness dir
+	// This ensures gt prime detects the Witness role correctly
+	witnessDir := filepath.Join(r.Path, "witness", "rig")
+	if _, err := os.Stat(witnessDir); os.IsNotExist(err) {
+		// Try witness/ without rig subdirectory
+		witnessDir = filepath.Join(r.Path, "witness")
+		if _, err := os.Stat(witnessDir); os.IsNotExist(err) {
+			// Fall back to rig path (shouldn't happen in normal setup)
+			witnessDir = r.Path
+		}
+	}
+
+	// Ensure Claude settings exist (autonomous role needs mail in SessionStart)
+	runtimeConfig := config.LoadRuntimeConfig(r.Path)
+	if err := runtime.EnsureSettingsForRole(witnessDir, "witness", runtimeConfig); err != nil {
+		return false, fmt.Errorf("ensuring runtime settings: %w", err)
+	}
+
+	// Create new tmux session
+	if err := t.NewSession(sessionName, witnessDir); err != nil {
+		return false, fmt.Errorf("creating session: %w", err)
+	}
+
+	// Set environment
+	bdActor := fmt.Sprintf("%s/witness", rigName)
+	t.SetEnvironment(sessionName, "GT_ROLE", "witness")
+	t.SetEnvironment(sessionName, "GT_RIG", rigName)
+	t.SetEnvironment(sessionName, "BD_ACTOR", bdActor)
+
+	// Apply Gas Town theming (non-fatal: theming failure doesn't affect operation)
+	theme := tmux.AssignTheme(rigName)
+	_ = t.ConfigureGasTownSession(sessionName, theme, rigName, "witness", "witness")
+
+	// Launch Claude directly (no shell respawn loop)
+	// Restarts are handled by daemon via LIFECYCLE mail or deacon health-scan
+	// NOTE: No gt prime injection needed - SessionStart hook handles it automatically
+	// Export GT_ROLE and BD_ACTOR in the command since tmux SetEnvironment only affects new panes
+	if err := t.SendKeys(sessionName, config.BuildAgentStartupCommand("witness", bdActor, "", "")); err != nil {
+		return false, fmt.Errorf("sending command: %w", err)
+	}
+
+	// Wait for Claude to start (non-fatal)
+	if err := t.WaitForCommand(sessionName, constants.SupportedShells, constants.ClaudeStartTimeout); err != nil {
+		// Non-fatal
+	}
+	time.Sleep(constants.ShutdownNotifyDelay)
+	_ = runtime.RunStartupFallback(t, sessionName, "witness", runtimeConfig)
+
+	// Inject startup nudge for predecessor discovery via /resume
+	address := fmt.Sprintf("%s/witness", rigName)
+	_ = session.StartupNudge(t, sessionName, session.StartupNudgeConfig{
+		Recipient: address,
+		Sender:    "deacon",
+		Topic:     "patrol",
+	}) // Non-fatal
+
+	// GUPP: Gas Town Universal Propulsion Principle
+	// Send the propulsion nudge to trigger autonomous patrol execution.
+	// Wait for beacon to be fully processed (needs to be separate prompt)
+	time.Sleep(2 * time.Second)
+	_ = t.NudgeSession(sessionName, session.PropulsionNudgeForRole("witness", witnessDir)) // Non-fatal
+
+	return true, nil
 }
 
 func runWitnessAttach(cmd *cobra.Command, args []string) error {

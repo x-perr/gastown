@@ -19,6 +19,8 @@ import (
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/runtime"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/witness"
@@ -315,6 +317,86 @@ func discoverAllRigs(townRoot string) ([]*rig.Rig, error) {
 	rigMgr := rig.NewManager(townRoot, rigsConfig, g)
 
 	return rigMgr.DiscoverRigs()
+}
+
+// ensureRefinerySession creates a refinery tmux session if it doesn't exist.
+// Returns true if a new session was created, false if it already existed.
+func ensureRefinerySession(rigName string, r *rig.Rig) (bool, error) {
+	t := tmux.NewTmux()
+	sessionName := fmt.Sprintf("gt-%s-refinery", rigName)
+
+	// Check if session already exists
+	running, err := t.HasSession(sessionName)
+	if err != nil {
+		return false, fmt.Errorf("checking session: %w", err)
+	}
+
+	if running {
+		return false, nil
+	}
+
+	// Working directory is the refinery's rig clone
+	refineryRigDir := filepath.Join(r.Path, "refinery", "rig")
+	if _, err := os.Stat(refineryRigDir); os.IsNotExist(err) {
+		// Fall back to rig path if refinery/rig doesn't exist
+		refineryRigDir = r.Path
+	}
+
+	// Ensure runtime settings exist (autonomous role needs mail in SessionStart)
+	runtimeConfig := config.LoadRuntimeConfig(r.Path)
+	if err := runtime.EnsureSettingsForRole(refineryRigDir, "refinery", runtimeConfig); err != nil {
+		return false, fmt.Errorf("ensuring runtime settings: %w", err)
+	}
+
+	// Create new tmux session
+	if err := t.NewSession(sessionName, refineryRigDir); err != nil {
+		return false, fmt.Errorf("creating session: %w", err)
+	}
+
+	// Set environment
+	bdActor := fmt.Sprintf("%s/refinery", rigName)
+	_ = t.SetEnvironment(sessionName, "GT_ROLE", "refinery")
+	_ = t.SetEnvironment(sessionName, "GT_RIG", rigName)
+	_ = t.SetEnvironment(sessionName, "BD_ACTOR", bdActor)
+
+	// Set beads environment
+	beadsDir := filepath.Join(r.Path, "mayor", "rig", ".beads")
+	_ = t.SetEnvironment(sessionName, "BEADS_DIR", beadsDir)
+	_ = t.SetEnvironment(sessionName, "BEADS_NO_DAEMON", "1")
+	_ = t.SetEnvironment(sessionName, "BEADS_AGENT_NAME", fmt.Sprintf("%s/refinery", rigName))
+
+	// Apply Gas Town theming (non-fatal: theming failure doesn't affect operation)
+	theme := tmux.AssignTheme(rigName)
+	_ = t.ConfigureGasTownSession(sessionName, theme, rigName, "refinery", "refinery")
+
+	// Launch Claude directly (no respawn loop - daemon handles restart)
+	// Export GT_ROLE and BD_ACTOR in the command since tmux SetEnvironment only affects new panes
+	if err := t.SendKeys(sessionName, config.BuildAgentStartupCommand("refinery", bdActor, "", "")); err != nil {
+		return false, fmt.Errorf("sending command: %w", err)
+	}
+
+	// Wait for Claude to start (non-fatal)
+	if err := t.WaitForCommand(sessionName, constants.SupportedShells, constants.ClaudeStartTimeout); err != nil {
+		// Non-fatal
+	}
+	time.Sleep(constants.ShutdownNotifyDelay)
+	_ = runtime.RunStartupFallback(t, sessionName, "refinery", runtimeConfig)
+
+	// Inject startup nudge for predecessor discovery via /resume
+	address := fmt.Sprintf("%s/refinery", rigName)
+	_ = session.StartupNudge(t, sessionName, session.StartupNudgeConfig{
+		Recipient: address,
+		Sender:    "deacon",
+		Topic:     "patrol",
+	}) // Non-fatal
+
+	// GUPP: Gas Town Universal Propulsion Principle
+	// Send the propulsion nudge to trigger autonomous patrol execution.
+	// Wait for beacon to be fully processed (needs to be separate prompt)
+	time.Sleep(2 * time.Second)
+	_ = t.NudgeSession(sessionName, session.PropulsionNudgeForRole("refinery", refineryRigDir)) // Non-fatal
+
+	return true, nil
 }
 
 func runShutdown(cmd *cobra.Command, args []string) error {

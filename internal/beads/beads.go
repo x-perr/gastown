@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/steveyegge/gastown/internal/runtime"
 )
 
 // Common errors
@@ -766,7 +768,7 @@ func (b *Beads) Update(id string, opts UpdateOptions) error {
 }
 
 // Close closes one or more issues.
-// If CLAUDE_SESSION_ID is set in the environment, it is passed to bd close
+// If a runtime session ID is set in the environment, it is passed to bd close
 // for work attribution tracking (see decision 009-session-events-architecture.md).
 func (b *Beads) Close(ids ...string) error {
 	if len(ids) == 0 {
@@ -776,7 +778,7 @@ func (b *Beads) Close(ids ...string) error {
 	args := append([]string{"close"}, ids...)
 
 	// Pass session ID for work attribution if available
-	if sessionID := os.Getenv("CLAUDE_SESSION_ID"); sessionID != "" {
+	if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
 		args = append(args, "--session="+sessionID)
 	}
 
@@ -785,7 +787,7 @@ func (b *Beads) Close(ids ...string) error {
 }
 
 // CloseWithReason closes one or more issues with a reason.
-// If CLAUDE_SESSION_ID is set in the environment, it is passed to bd close
+// If a runtime session ID is set in the environment, it is passed to bd close
 // for work attribution tracking (see decision 009-session-events-architecture.md).
 func (b *Beads) CloseWithReason(reason string, ids ...string) error {
 	if len(ids) == 0 {
@@ -796,7 +798,7 @@ func (b *Beads) CloseWithReason(reason string, ids ...string) error {
 	args = append(args, "--reason="+reason)
 
 	// Pass session ID for work attribution if available
-	if sessionID := os.Getenv("CLAUDE_SESSION_ID"); sessionID != "" {
+	if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
 		args = append(args, "--session="+sessionID)
 	}
 

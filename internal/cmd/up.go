@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/crew"
 	"github.com/steveyegge/gastown/internal/daemon"
 	"github.com/steveyegge/gastown/internal/deacon"
@@ -18,6 +19,8 @@ import (
 	"github.com/steveyegge/gastown/internal/mayor"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/refinery"
+	"github.com/steveyegge/gastown/internal/runtime"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/witness"
@@ -245,6 +248,127 @@ func ensureDaemon(townRoot string) error {
 	if !running {
 		return fmt.Errorf("daemon failed to start")
 	}
+
+	return nil
+}
+
+// ensureSession starts a Claude session if not running.
+func ensureSession(t *tmux.Tmux, sessionName, workDir, role string) error {
+	running, err := t.HasSession(sessionName)
+	if err != nil {
+		return err
+	}
+	if running {
+		return nil
+	}
+
+	// Create session
+	if err := t.NewSession(sessionName, workDir); err != nil {
+		return err
+	}
+
+	// Set environment (non-fatal: session works without these)
+	_ = t.SetEnvironment(sessionName, "GT_ROLE", role)
+	_ = t.SetEnvironment(sessionName, "BD_ACTOR", role)
+
+	// Apply theme based on role (non-fatal: theming failure doesn't affect operation)
+	switch role {
+	case "mayor":
+		theme := tmux.MayorTheme()
+		_ = t.ConfigureGasTownSession(sessionName, theme, "", "Mayor", "coordinator")
+	case "deacon":
+		theme := tmux.DeaconTheme()
+		_ = t.ConfigureGasTownSession(sessionName, theme, "", "Deacon", "health-check")
+	}
+
+	// Launch runtime
+	// Export GT_ROLE and BD_ACTOR in the command since tmux SetEnvironment only affects new panes
+	var claudeCmd string
+	runtimeCmd := config.GetRuntimeCommand("")
+	runtimeConfig := config.LoadRuntimeConfig("")
+	if role == "deacon" {
+		// Deacon uses respawn loop
+		prefix := "GT_ROLE=deacon BD_ACTOR=deacon GIT_AUTHOR_NAME=deacon"
+		if runtimeConfig.Session != nil && runtimeConfig.Session.SessionIDEnv != "" {
+			prefix = prefix + " GT_SESSION_ID_ENV=" + runtimeConfig.Session.SessionIDEnv
+		}
+		claudeCmd = `export ` + prefix + ` && while true; do echo "⛪ Starting Deacon session..."; ` + runtimeCmd + `; echo ""; echo "Deacon exited. Restarting in 2s... (Ctrl-C to stop)"; sleep 2; done`
+	} else {
+		claudeCmd = config.BuildAgentStartupCommand(role, role, "", "")
+	}
+
+	if err := t.SendKeysDelayed(sessionName, claudeCmd, 200); err != nil {
+		return err
+	}
+
+	// Wait for Claude to start (non-fatal)
+	// Note: Deacon respawn loop makes beacon tricky - Claude restarts multiple times
+	// For non-respawn (mayor), inject beacon
+	if role != "deacon" {
+		if err := t.WaitForCommand(sessionName, constants.SupportedShells, constants.ClaudeStartTimeout); err != nil {
+			// Non-fatal
+		}
+		time.Sleep(constants.ShutdownNotifyDelay)
+
+		// Inject startup nudge for predecessor discovery via /resume
+		_ = session.StartupNudge(t, sessionName, session.StartupNudgeConfig{
+			Recipient: role,
+			Sender:    "human",
+			Topic:     "cold-start",
+		}) // Non-fatal
+		_ = runtime.RunStartupFallback(t, sessionName, role, runtimeConfig)
+	}
+
+	return nil
+}
+
+// ensureWitness starts a witness session for a rig.
+func ensureWitness(t *tmux.Tmux, sessionName, rigPath, rigName string) error {
+	running, err := t.HasSession(sessionName)
+	if err != nil {
+		return err
+	}
+	if running {
+		return nil
+	}
+
+	// Create session in rig directory
+	if err := t.NewSession(sessionName, rigPath); err != nil {
+		return err
+	}
+
+	// Set environment (non-fatal: session works without these)
+	bdActor := fmt.Sprintf("%s/witness", rigName)
+	_ = t.SetEnvironment(sessionName, "GT_ROLE", "witness")
+	_ = t.SetEnvironment(sessionName, "GT_RIG", rigName)
+	_ = t.SetEnvironment(sessionName, "BD_ACTOR", bdActor)
+
+	// Apply theme (non-fatal: theming failure doesn't affect operation)
+	theme := tmux.AssignTheme(rigName)
+	_ = t.ConfigureGasTownSession(sessionName, theme, "", "Witness", rigName)
+
+	// Launch runtime using runtime config
+	// Export GT_ROLE and BD_ACTOR in the command since tmux SetEnvironment only affects new panes
+	runtimeConfig := config.LoadRuntimeConfig(rigPath)
+	claudeCmd := config.BuildAgentStartupCommand("witness", bdActor, rigPath, "")
+	if err := t.SendKeysDelayed(sessionName, claudeCmd, 200); err != nil {
+		return err
+	}
+
+	// Wait for Claude to start (non-fatal)
+	if err := t.WaitForCommand(sessionName, constants.SupportedShells, constants.ClaudeStartTimeout); err != nil {
+		// Non-fatal
+	}
+	time.Sleep(constants.ShutdownNotifyDelay)
+	_ = runtime.RunStartupFallback(t, sessionName, "witness", runtimeConfig)
+
+	// Inject startup nudge for predecessor discovery via /resume
+	address := fmt.Sprintf("%s/witness", rigName)
+	_ = session.StartupNudge(t, sessionName, session.StartupNudgeConfig{
+		Recipient: address,
+		Sender:    "deacon",
+		Topic:     "patrol",
+	}) // Non-fatal
 
 	return nil
 }
