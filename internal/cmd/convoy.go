@@ -27,6 +27,36 @@ func generateShortID() string {
 	return strings.ToLower(base32.StdEncoding.EncodeToString(b)[:5])
 }
 
+// looksLikeIssueID checks if a string looks like a beads issue ID.
+// Issue IDs have the format: prefix-id (e.g., gt-abc, bd-xyz, hq-123).
+func looksLikeIssueID(s string) bool {
+	// Common beads prefixes
+	prefixes := []string{"gt-", "bd-", "hq-"}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	// Also check for pattern: 2-3 lowercase letters followed by hyphen
+	// This catches custom prefixes defined in routes.jsonl
+	if len(s) >= 4 && s[2] == '-' || (len(s) >= 5 && s[3] == '-') {
+		hyphenIdx := strings.Index(s, "-")
+		if hyphenIdx >= 2 && hyphenIdx <= 3 {
+			prefix := s[:hyphenIdx]
+			// Check if prefix is all lowercase letters
+			allLower := true
+			for _, c := range prefix {
+				if c < 'a' || c > 'z' {
+					allLower = false
+					break
+				}
+			}
+			return allLower
+		}
+	}
+	return false
+}
+
 // Convoy command flags
 var (
 	convoyMolecule    string
@@ -170,6 +200,18 @@ func getTownBeadsDir() (string, error) {
 func runConvoyCreate(cmd *cobra.Command, args []string) error {
 	name := args[0]
 	trackedIssues := args[1:]
+
+	// If first arg looks like an issue ID (has beads prefix), treat all args as issues
+	// and auto-generate a name from the first issue's title
+	if looksLikeIssueID(name) {
+		trackedIssues = args // All args are issue IDs
+		// Get the first issue's title to use as convoy name
+		if details := getIssueDetails(args[0]); details != nil && details.Title != "" {
+			name = details.Title
+		} else {
+			name = fmt.Sprintf("Tracking %s", args[0])
+		}
+	}
 
 	townBeads, err := getTownBeadsDir()
 	if err != nil {
