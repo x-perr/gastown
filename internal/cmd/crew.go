@@ -240,8 +240,9 @@ var crewPrevCmd = &cobra.Command{
 }
 
 var crewStartCmd = &cobra.Command{
-	Use:   "start <rig> [name]",
-	Short: "Start crew worker(s) in a rig",
+	Use:     "start <rig> [name]",
+	Aliases: []string{"spawn"},
+	Short:   "Start crew worker(s) in a rig",
 	Long: `Start crew workers in a rig, creating workspaces if they don't exist.
 
 Takes the rig name as the first argument. Optionally specify a crew member name

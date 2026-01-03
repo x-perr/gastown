@@ -39,8 +39,9 @@ and check status.`,
 }
 
 var deaconStartCmd = &cobra.Command{
-	Use:   "start",
-	Short: "Start the Deacon session",
+	Use:     "start",
+	Aliases: []string{"spawn"},
+	Short:   "Start the Deacon session",
 	Long: `Start the Deacon tmux session.
 
 Creates a new detached tmux session for the Deacon and launches Claude.

@@ -34,8 +34,9 @@ into integration branches and ultimately to main.`,
 }
 
 var refineryStartCmd = &cobra.Command{
-	Use:   "start [rig]",
-	Short: "Start the refinery",
+	Use:     "start [rig]",
+	Aliases: []string{"spawn"},
+	Short:   "Start the refinery",
 	Long: `Start the Refinery for a rig.
 
 Launches the merge queue processor which monitors for polecat work branches

@@ -38,8 +38,9 @@ that seem blocked, and reports status to the mayor.`,
 }
 
 var witnessStartCmd = &cobra.Command{
-	Use:   "start <rig>",
-	Short: "Start the witness",
+	Use:     "start <rig>",
+	Aliases: []string{"spawn"},
+	Short:   "Start the witness",
 	Long: `Start the Witness for a rig.
 
 Launches the monitoring agent which watches polecats for stuck or idle
