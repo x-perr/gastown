@@ -253,8 +253,9 @@ func runCrewRefresh(cmd *cobra.Command, args []string) error {
 }
 
 // runCrewStart starts crew workers in a rig.
-// args[0] is the rig name (optional if inferrable from cwd)
-// args[1:] are crew member names (optional - defaults to all if not specified)
+// If first arg is a valid rig name, it's used as the rig; otherwise rig is inferred from cwd.
+// Remaining args (or all args if rig is inferred) are crew member names.
+// Defaults to all crew members if no names specified.
 func runCrewStart(cmd *cobra.Command, args []string) error {
 	var rigName string
 	var crewNames []string
@@ -263,8 +264,16 @@ func runCrewStart(cmd *cobra.Command, args []string) error {
 		// No args - infer rig from cwd
 		rigName = "" // getCrewManager will infer from cwd
 	} else {
-		rigName = args[0]
-		crewNames = args[1:]
+		// Check if first arg is a valid rig name
+		if _, _, err := getRig(args[0]); err == nil {
+			// First arg is a rig name
+			rigName = args[0]
+			crewNames = args[1:]
+		} else {
+			// First arg is not a rig - infer rig from cwd and treat all args as crew names
+			rigName = "" // getCrewManager will infer from cwd
+			crewNames = args
+		}
 	}
 
 	// Get the rig manager and rig (infers from cwd if rigName is empty)

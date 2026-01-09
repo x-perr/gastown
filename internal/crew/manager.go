@@ -176,7 +176,7 @@ func (m *Manager) Add(name string, createBranch bool) (*CrewWorker, error) {
 
 	// Copy overlay files from .runtime/overlay/ to crew root.
 	// This allows services to have .env and other config files at their root.
-	if err := m.copyOverlay(crewPath); err != nil {
+	if err := rig.CopyOverlay(m.rig.Path, crewPath); err != nil {
 		// Non-fatal - log warning but continue
 		fmt.Printf("Warning: could not copy overlay files: %v\n", err)
 	}
@@ -576,60 +576,4 @@ func (m *Manager) IsRunning(name string) (bool, error) {
 	t := tmux.NewTmux()
 	sessionID := m.SessionName(name)
 	return t.HasSession(sessionID)
-}
-
-// copyOverlay copies files from <rig>/.runtime/overlay/ to the crew worker root.
-// This allows storing gitignored files (like .env) that services need at their root.
-// The overlay is copied non-recursively - only files, not subdirectories.
-//
-// Structure:
-//
-//	rig/
-//	  .runtime/
-//	    overlay/
-//	      .env          <- Copied to crew root
-//	      config.json    <- Copied to crew root
-//	  crew/
-//	    <name>/
-//	      .env          <- Copied from overlay
-//	      config.json    <- Copied from overlay
-func (m *Manager) copyOverlay(crewPath string) error {
-	overlayDir := filepath.Join(m.rig.Path, ".runtime", "overlay")
-
-	// Check if overlay directory exists
-	entries, err := os.ReadDir(overlayDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// No overlay directory - not an error, just nothing to copy
-			return nil
-		}
-		return fmt.Errorf("reading overlay dir: %w", err)
-	}
-
-	// Copy each file (not directories) from overlay to crew root
-	for _, entry := range entries {
-		if entry.IsDir() {
-			// Skip subdirectories - only copy files at overlay root
-			continue
-		}
-
-		srcPath := filepath.Join(overlayDir, entry.Name())
-		dstPath := filepath.Join(crewPath, entry.Name())
-
-		// Read source file
-		data, err := os.ReadFile(srcPath)
-		if err != nil {
-			// Log warning but continue - don't fail spawn for overlay issues
-			fmt.Printf("Warning: could not read overlay file %s: %v\n", entry.Name(), err)
-			continue
-		}
-
-		// Write to destination
-		if err := os.WriteFile(dstPath, data, 0644); err != nil {
-			fmt.Printf("Warning: could not write overlay file %s: %v\n", entry.Name(), err)
-			continue
-		}
-	}
-
-	return nil
 }
