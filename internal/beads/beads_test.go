@@ -139,7 +139,11 @@ func TestIntegration(t *testing.T) {
 		dir = parent
 	}
 
-	dbPath := filepath.Join(dir, ".beads", "beads.db")
+	// Resolve the actual beads directory (following redirect if present)
+	// In multi-worktree setups, worktrees have .beads/redirect pointing to
+	// the canonical beads location (e.g., mayor/rig/.beads)
+	beadsDir := ResolveBeadsDir(dir)
+	dbPath := filepath.Join(beadsDir, "beads.db")
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		t.Skip("no beads.db found (JSONL-only repo)")
 	}
@@ -150,7 +154,9 @@ func TestIntegration(t *testing.T) {
 	// This can happen when JSONL is updated (e.g., by git pull) but the SQLite database
 	// hasn't been imported yet. Running sync --import-only ensures we test against
 	// consistent data and prevents flaky test failures.
-	syncCmd := exec.Command("bd", "--no-daemon", "sync", "--import-only")
+	// We use --allow-stale to handle cases where the daemon is actively writing and
+	// the staleness check would otherwise fail spuriously.
+	syncCmd := exec.Command("bd", "--no-daemon", "--allow-stale", "sync", "--import-only")
 	syncCmd.Dir = dir
 	if err := syncCmd.Run(); err != nil {
 		// If sync fails (e.g., no database exists), just log and continue
