@@ -1,0 +1,355 @@
+description = """
+Agent-managed migration from SQLite to Dolt backend.
+
+This molecule guides Claude through a complete SQLite-to-Dolt migration.
+Each step has verification criteria - steps stay open until outcome is confirmed.
+The agent makes judgment calls at each step; the formula provides structure.
+
+## Purpose
+
+When a workspace needs to migrate from SQLite (v0.5.x) to Dolt (v0.6.x),
+this formula provides a structured, recoverable workflow. Claude executes
+the steps, handles edge cases intelligently, and can recover from partial
+migration state.
+
+## Key Principles
+
+1. **Verification-gated steps** - Not "command ran" but "outcome confirmed"
+2. **Recoverable state** - Can resume from any step after crash/handoff
+3. **Backup before migrate** - Always create recovery point
+4. **Validate before commit** - Verify bead counts match before declaring success
+5. **Machine-readable output** - Use --json flags for reliable parsing
+
+## Edge Cases Handled
+
+- **JSONL orphans**: Beads in JSONL not in SQLite (import first)
+- **Split-brain**: Partial migration state (detect and recover)
+- **Hook failures**: Daemon hooks failing during migration (pause hooks)
+- **Rollback**: Restore from backup if validation fails
+
+## Variables
+
+| Variable | Source | Description |
+|----------|--------|-------------|
+| town_root | env | Path to Gas Town root (~/.gt or $GT_ROOT) |
+
+## Execution
+
+```bash
+bd mol wisp mol-migration  # Create wisp
+```"""
+formula = "mol-migration"
+version = 1
+
+[[steps]]
+id = "detect"
+title = "Assess migration readiness"
+description = """
+Run diagnostic checks to assess whether the workspace is ready for migration.
+
+## Action
+
+Run migration readiness checks:
+```bash
+gt doctor --migrate --json
+bd doctor --json
+```
+
+## Parse Results
+
+The `gt doctor --migrate --json` output contains:
+- `migration_ready`: true/false
+- `unmigrated_rigs`: list of rigs still on SQLite
+- `blockers`: any issues preventing migration
+
+The `bd doctor --json` output contains:
+- `backend`: "sqlite" or "dolt"
+- `jsonl_count`: beads in JSONL files
+- `db_count`: beads in database
+- `orphans`: beads in JSONL but not in DB
+
+## Decision Matrix
+
+| Condition | Action |
+|-----------|--------|
+| migration_ready=true, no orphans | Proceed to backup |
+| migration_ready=true, orphans exist | Run `bd doctor --fix` first, then proceed |
+| migration_ready=false | Log blockers, mail Witness for help |
+| Already on Dolt | Skip to validate step |
+
+## OnFail
+
+If checks fail to run:
+```bash
+gt mail send mayor/ -s "BLOCKED: Migration readiness check failed" \
+  -m "gt doctor or bd doctor failed to run. Manual investigation needed."
+```
+
+**Exit criteria:** Migration readiness assessed, blockers identified or none found."""
+
+[[steps]]
+id = "backup"
+title = "Create recovery snapshot"
+needs = ["detect"]
+description = """
+Create a backup before any destructive operations.
+
+## Pre-check
+
+Verify git state is clean:
+```bash
+git status --porcelain
+```
+If dirty, commit or stash changes first.
+
+## Action
+
+1. **Snapshot beads state:**
+```bash
+# Export current beads to backup file
+bd export --format=jsonl > ~/.gt/backup/beads-pre-migration-$(date +%Y%m%d-%H%M%S).jsonl
+
+# For each rig, do the same
+for rig in gastown beads; do
+  bd export --rig=$rig --format=jsonl > ~/.gt/backup/$rig-beads-pre-migration-$(date +%Y%m%d-%H%M%S).jsonl
+done
+```
+
+2. **Record pre-migration counts:**
+```bash
+# Store counts for later validation
+bd doctor --json | jq '{town_jsonl: .jsonl_count, town_db: .db_count}' > ~/.gt/backup/pre-migration-counts.json
+```
+
+3. **Git snapshot (optional but recommended):**
+```bash
+git stash push -m "pre-migration-snapshot" --include-untracked
+```
+
+## Verify
+
+1. Backup files exist in `~/.gt/backup/`
+2. Pre-migration counts recorded
+3. Can restore from backup if needed
+
+## OnFail
+
+If backup fails:
+- Do NOT proceed with migration
+- Log error and mail Witness
+
+**Exit criteria:** Recovery snapshot created, can rollback if needed."""
+
+[[steps]]
+id = "migrate-town"
+title = "Migrate town beads to Dolt"
+needs = ["backup"]
+description = """
+Migrate the town-level beads from SQLite to Dolt.
+
+## Pre-check
+
+Verify daemon hooks won't interfere:
+```bash
+gt daemon pause-hooks  # Pause daemon hooks during migration
+```
+
+## Action
+
+Run the migration:
+```bash
+bd migrate --to-dolt --verbose
+```
+
+## Expected Output
+
+Successful migration shows:
+```
+Migrating from SQLite to Dolt...
+  Source: beads.db (SQLite)
+  Target: beads (Dolt)
+  Issues: N transferred
+  ...
+Migration complete.
+```
+
+## Handle Errors
+
+| Error | Action |
+|-------|--------|
+| "Already on Dolt" | Skip, already migrated |
+| "JSONL orphans found" | Run `bd doctor --fix --source=jsonl` first |
+| "Database locked" | Stop daemon: `gt daemon stop`, retry |
+| "Schema mismatch" | Run `bd migrate` (schema migration) first |
+
+## Verify
+
+```bash
+bd doctor --json | jq '.backend'
+# Should return "dolt"
+```
+
+**Exit criteria:** Town beads migrated to Dolt, bd doctor confirms Dolt backend."""
+
+[[steps]]
+id = "migrate-rigs"
+title = "Migrate rig beads to Dolt"
+needs = ["migrate-town"]
+description = """
+Migrate each rig's beads from SQLite to Dolt.
+
+## Action
+
+For each rig in the workspace:
+```bash
+# Get list of rigs
+gt doctor --migrate --json | jq -r '.unmigrated_rigs[]'
+
+# Migrate each rig
+for rig in $(gt doctor --migrate --json | jq -r '.unmigrated_rigs[]'); do
+  echo "Migrating rig: $rig"
+  bd migrate --to-dolt --rig=$rig --verbose
+done
+```
+
+## Handle Errors
+
+Same error handling as migrate-town step. If one rig fails:
+1. Log which rig failed and why
+2. Continue with other rigs
+3. Return to failed rig after others complete
+
+## Verify Each Rig
+
+After migrating each rig:
+```bash
+bd doctor --rig=$rig --json | jq '.backend'
+# Should return "dolt"
+```
+
+## Split-Brain Detection
+
+If some rigs are Dolt and some SQLite:
+```bash
+gt doctor --migrate --json | jq '.unmigrated_rigs'
+```
+This lists any remaining SQLite rigs. They need individual attention.
+
+**Exit criteria:** All rigs migrated to Dolt, or blockers documented for failed rigs."""
+
+[[steps]]
+id = "validate"
+title = "Validate migration completeness"
+needs = ["migrate-rigs"]
+description = """
+Verify all beads were transferred correctly.
+
+## Action
+
+1. **Compare counts:**
+```bash
+# Load pre-migration counts
+cat ~/.gt/backup/pre-migration-counts.json
+
+# Get post-migration counts
+bd doctor --json | jq '{post_jsonl: .jsonl_count, post_db: .db_count}'
+
+# They should match (or post >= pre if new beads created)
+```
+
+2. **Run full doctor:**
+```bash
+gt doctor --verbose
+bd doctor --deep
+```
+
+3. **Resume daemon hooks:**
+```bash
+gt daemon resume-hooks
+```
+
+## Validation Criteria
+
+| Check | Expected |
+|-------|----------|
+| bd doctor backend | "dolt" |
+| bead counts | post >= pre |
+| gt doctor | No migration warnings |
+| bd doctor --deep | No integrity errors |
+
+## OnFail: Rollback
+
+If validation fails:
+```bash
+# Stop and assess
+gt daemon stop
+
+# Restore from backup
+bd migrate --to-sqlite  # Escape hatch back to SQLite
+# OR restore from JSONL backup:
+cp ~/.gt/backup/beads-pre-migration-*.jsonl .beads/
+bd doctor --fix --source=jsonl
+
+# Notify
+gt mail send mayor/ -s "ALERT: Migration validation failed, rolled back" \
+  -m "Migration did not pass validation. Restored from backup.
+Errors: <list errors found>"
+```
+
+**Exit criteria:** All validation checks pass, or rollback completed successfully."""
+
+[[steps]]
+id = "report"
+title = "Generate migration report"
+needs = ["validate"]
+description = """
+Summarize what was migrated and any issues encountered.
+
+## Action
+
+Generate a migration report:
+```bash
+echo "# Migration Report"
+echo "Date: $(date)"
+echo ""
+echo "## Summary"
+echo "- Town beads: Migrated to Dolt"
+
+# List rig status
+echo ""
+echo "## Rig Status"
+for rig in gastown beads; do
+  backend=$(bd doctor --rig=$rig --json 2>/dev/null | jq -r '.backend // "unknown"')
+  echo "- $rig: $backend"
+done
+
+# Any warnings
+echo ""
+echo "## Warnings"
+gt doctor --migrate 2>&1 | grep -i "warning" || echo "None"
+```
+
+## Update Beads
+
+Close the migration tracking bead (if one exists):
+```bash
+bd close <migration-bead-id> --reason "Migration completed successfully"
+```
+
+## Notify
+
+Send completion notification:
+```bash
+gt mail send mayor/ -s "Migration complete" \
+  -m "SQLite to Dolt migration completed.
+Town: Dolt
+Rigs: All Dolt
+Issues: None (or list any)"
+```
+
+**Exit criteria:** Report generated, stakeholders notified, bead closed."""
+
+[vars]
+[vars.town_root]
+description = "Path to Gas Town root directory"
+default = ""
