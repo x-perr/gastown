@@ -489,7 +489,9 @@ func (d *Daemon) checkDeaconHeartbeat() {
 	}
 
 	// Session exists but heartbeat is stale - Deacon is stuck
-	if age > 30*time.Minute {
+	// PATCH-002: Reduced from 30m to 10m for faster recovery.
+	// Must be > backoff-max (5m) to avoid false positive kills during legitimate sleep.
+	if age > 10*time.Minute {
 		// Very stuck - restart the session.
 		// Use KillSessionWithProcesses to ensure all descendant processes are killed.
 		d.logger.Printf("Deacon stuck for %s - restarting session", age.Round(time.Minute))
