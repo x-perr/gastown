@@ -514,7 +514,7 @@ func ValidTarget(target string) bool {
 // DefaultBase returns a sensible default base configuration.
 // This includes PATH setup and gt prime hooks that all agents need.
 func DefaultBase() *HooksConfig {
-	pathSetup := `export PATH="$HOME/go/bin:$HOME/.local/bin:$PATH"`
+	pathSetup := `export PATH="/usr/local/bin:$HOME/go/bin:$HOME/.local/bin:$PATH"`
 
 	return &HooksConfig{
 		SessionStart: []HookEntry{
