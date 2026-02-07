@@ -58,6 +58,12 @@ type Daemon struct {
 	// See: https://github.com/steveyegge/gastown/issues/567
 	// Note: Only accessed from heartbeat loop goroutine - no sync needed.
 	deaconLastStarted time.Time
+
+	// PATCH-006: Resolved binary paths to avoid PATH issues in subprocesses.
+	// The daemon may be started with a limited PATH, causing exec.Command("gt", ...)
+	// to fail with "executable file not found in $PATH".
+	gtPath string
+	bdPath string
 }
 
 // sessionDeath records a detected session death for mass death analysis.
@@ -104,6 +110,19 @@ func New(config *Config) (*Daemon, error) {
 		}
 	}
 
+	// PATCH-006: Resolve binary paths at startup to avoid PATH issues in subprocesses.
+	// If not found, fall back to bare command names (will use PATH at runtime).
+	gtPath, err := exec.LookPath("gt")
+	if err != nil {
+		gtPath = "gt" // Fallback - will fail with helpful error if not in PATH
+		logger.Printf("Warning: gt not found in PATH, subprocess calls may fail")
+	}
+	bdPath, err := exec.LookPath("bd")
+	if err != nil {
+		bdPath = "bd" // Fallback
+		logger.Printf("Warning: bd not found in PATH, subprocess calls may fail")
+	}
+
 	return &Daemon{
 		config:       config,
 		patrolConfig: patrolConfig,
@@ -112,6 +131,8 @@ func New(config *Config) (*Daemon, error) {
 		ctx:          ctx,
 		cancel:       cancel,
 		doltServer:   doltServer,
+		gtPath:       gtPath,
+		bdPath:       bdPath,
 	}, nil
 }
 
@@ -172,7 +193,7 @@ func (d *Daemon) Run() error {
 	}
 
 	// Start convoy watcher for event-driven convoy completion
-	d.convoyWatcher = NewConvoyWatcher(d.config.TownRoot, d.logger.Printf)
+	d.convoyWatcher = NewConvoyWatcher(d.config.TownRoot, d.logger.Printf, d.gtPath, d.bdPath)
 	if err := d.convoyWatcher.Start(); err != nil {
 		d.logger.Printf("Warning: failed to start convoy watcher: %v", err)
 	} else {
@@ -191,6 +212,10 @@ func (d *Daemon) Run() error {
 			d.logger.Println("KRC pruner started")
 		}
 	}
+
+	// Note: PATCH-010 uses per-session hooks in deacon/manager.go (SetAutoRespawnHook).
+	// Global pane-died hooks don't fire reliably in tmux 3.2a, so we rely on the
+	// per-session approach which has been tested to work for continuous recovery.
 
 	// Initial heartbeat
 	d.heartbeat(state)
@@ -446,6 +471,12 @@ const deaconGracePeriod = 5 * time.Minute
 // checkDeaconHeartbeat checks if the Deacon is making progress.
 // This is a belt-and-suspenders fallback in case Boot doesn't detect stuck states.
 // Uses the heartbeat file that the Deacon updates on each patrol cycle.
+//
+// PATCH-005: Fixed grace period logic. Old logic skipped heartbeat check entirely
+// during grace period, allowing stuck Deacons to go undetected. New logic:
+// - Always read heartbeat first
+// - Grace period only applies if heartbeat is from BEFORE we started Deacon
+// - If heartbeat is from AFTER start but stale, Deacon is stuck
 func (d *Daemon) checkDeaconHeartbeat() {
 	// Always read heartbeat first (PATCH-005)
 	hb := deacon.ReadHeartbeat(d.config.TownRoot)
@@ -888,12 +919,12 @@ func (d *Daemon) migrateBeadsToTown(srcBeadsDir, dstBeadsDir string) error {
 	d.killBeadsDaemon(srcBeadsDir)
 
 	// Set up export command (reads from source)
-	exportCmd := exec.Command("bd", "export", "--no-daemon")
+	exportCmd := exec.Command(d.bdPath, "export", "--no-daemon")
 	exportCmd.Env = append(os.Environ(), "BEADS_DIR="+srcBeadsDir)
 	exportCmd.Dir = filepath.Dir(srcBeadsDir)
 
 	// Set up import command (writes to destination)
-	importCmd := exec.Command("bd", "import", "--no-daemon")
+	importCmd := exec.Command(d.bdPath, "import", "--no-daemon")
 	importCmd.Env = append(os.Environ(), "BEADS_DIR="+dstBeadsDir)
 	importCmd.Dir = filepath.Dir(dstBeadsDir)
 
@@ -1472,7 +1503,7 @@ restart_error: %v
 Manual intervention may be required.`,
 		polecatName, hookBead, restartErr)
 
-	cmd := exec.Command("gt", "mail", "send", witnessAddr, "-s", subject, "-m", body) //nolint:gosec // G204: args are constructed internally
+	cmd := exec.Command(d.gtPath, "mail", "send", witnessAddr, "-s", subject, "-m", body) //nolint:gosec // G204: args are constructed internally
 	cmd.Dir = d.config.TownRoot
 	cmd.Env = os.Environ() // Inherit PATH to find gt executable
 	if err := cmd.Run(); err != nil {
