@@ -447,17 +447,49 @@ const deaconGracePeriod = 5 * time.Minute
 // This is a belt-and-suspenders fallback in case Boot doesn't detect stuck states.
 // Uses the heartbeat file that the Deacon updates on each patrol cycle.
 func (d *Daemon) checkDeaconHeartbeat() {
-	// Grace period: don't check heartbeat for newly started sessions.
-	// This prevents the race condition where we start a Deacon, then immediately
-	// see a stale heartbeat (from before the crash) and kill the session we just started.
-	// See: https://github.com/steveyegge/gastown/issues/567
-	if !d.deaconLastStarted.IsZero() && time.Since(d.deaconLastStarted) < deaconGracePeriod {
-		d.logger.Printf("Deacon started recently (%s ago), skipping heartbeat check",
-			time.Since(d.deaconLastStarted).Round(time.Second))
-		return
+	// Always read heartbeat first (PATCH-005)
+	hb := deacon.ReadHeartbeat(d.config.TownRoot)
+
+	sessionName := d.getDeaconSessionName()
+
+	// Check if we recently started a Deacon
+	if !d.deaconLastStarted.IsZero() {
+		timeSinceStart := time.Since(d.deaconLastStarted)
+
+		if hb == nil {
+			// No heartbeat file exists
+			if timeSinceStart < deaconGracePeriod {
+				d.logger.Printf("Deacon started %s ago, awaiting first heartbeat...",
+					timeSinceStart.Round(time.Second))
+				return
+			}
+			// Grace period expired without any heartbeat - Deacon failed to start
+			d.logger.Printf("Deacon started %s ago but hasn't written heartbeat - restarting",
+				timeSinceStart.Round(time.Minute))
+			d.restartStuckDeacon(sessionName)
+			return
+		}
+
+		// Heartbeat exists - check if it's from BEFORE we started this Deacon
+		if hb.Timestamp.Before(d.deaconLastStarted) {
+			// Heartbeat is stale (from before restart)
+			if timeSinceStart < deaconGracePeriod {
+				d.logger.Printf("Deacon started %s ago, heartbeat is pre-restart, awaiting fresh heartbeat...",
+					timeSinceStart.Round(time.Second))
+				return
+			}
+			// Grace period expired but heartbeat still from before start
+			d.logger.Printf("Deacon started %s ago but heartbeat still pre-restart - Deacon stuck at startup",
+				timeSinceStart.Round(time.Minute))
+			d.restartStuckDeacon(sessionName)
+			return
+		}
+
+		// Heartbeat is from AFTER we started - Deacon has written at least one heartbeat
+		// Fall through to normal staleness check
 	}
 
-	hb := deacon.ReadHeartbeat(d.config.TownRoot)
+	// No recent start tracking or Deacon has written fresh heartbeat - check normally
 	if hb == nil {
 		// No heartbeat file - Deacon hasn't started a cycle yet
 		return
@@ -465,15 +497,12 @@ func (d *Daemon) checkDeaconHeartbeat() {
 
 	age := hb.Age()
 
-	// If heartbeat is very stale (>15 min), the Deacon is likely stuck
+	// If heartbeat is fresh, nothing to do
 	if !hb.ShouldPoke() {
-		// Heartbeat is fresh enough
 		return
 	}
 
 	d.logger.Printf("Deacon heartbeat is stale (%s old), checking session...", age.Round(time.Minute))
-
-	sessionName := d.getDeaconSessionName()
 
 	// Check if session exists
 	hasSession, err := d.tmux.HasSession(sessionName)
@@ -489,16 +518,10 @@ func (d *Daemon) checkDeaconHeartbeat() {
 	}
 
 	// Session exists but heartbeat is stale - Deacon is stuck
-	if age > 30*time.Minute {
-		// Very stuck - restart the session.
-		// Use KillSessionWithProcesses to ensure all descendant processes are killed.
-		d.logger.Printf("Deacon stuck for %s - restarting session", age.Round(time.Minute))
-		if err := d.tmux.KillSessionWithProcesses(sessionName); err != nil {
-			d.logger.Printf("Error killing stuck Deacon: %v", err)
-		}
-		// Spawn new Deacon immediately instead of waiting for next heartbeat
-		// (kill may fail if session disappeared between check and kill)
-		d.ensureDeaconRunning()
+	// PATCH-002: Reduced from 30m to 10m for faster recovery.
+	// Must be > backoff-max (5m) to avoid false positive kills during legitimate sleep.
+	if age > 10*time.Minute {
+		d.restartStuckDeacon(sessionName)
 	} else {
 		// Stuck but not critically - nudge to wake up
 		d.logger.Printf("Deacon stuck for %s - nudging session", age.Round(time.Minute))
@@ -506,6 +529,21 @@ func (d *Daemon) checkDeaconHeartbeat() {
 			d.logger.Printf("Error nudging stuck Deacon: %v", err)
 		}
 	}
+}
+
+// restartStuckDeacon kills and restarts a stuck Deacon session.
+// Extracted for reuse by PATCH-005 grace period logic.
+func (d *Daemon) restartStuckDeacon(sessionName string) {
+	// Check if session exists before trying to kill
+	hasSession, _ := d.tmux.HasSession(sessionName)
+	if hasSession {
+		d.logger.Printf("Killing stuck Deacon session %s", sessionName)
+		if err := d.tmux.KillSessionWithProcesses(sessionName); err != nil {
+			d.logger.Printf("Error killing stuck Deacon: %v", err)
+		}
+	}
+	// Spawn new Deacon immediately
+	d.ensureDeaconRunning()
 }
 
 // ensureWitnessesRunning ensures witnesses are running for configured rigs.
