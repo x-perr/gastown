@@ -308,6 +308,7 @@ var (
 
 	// Zombie scan flags
 	zombieScanDryRun bool
+	zombieScanAuto   bool
 )
 
 func init() {
@@ -358,6 +359,8 @@ func init() {
 	// Flags for zombie-scan
 	deaconZombieScanCmd.Flags().BoolVar(&zombieScanDryRun, "dry-run", false,
 		"List zombies without killing them")
+	deaconZombieScanCmd.Flags().BoolVar(&zombieScanAuto, "auto", false,
+		"Use town zombie.auto_cleanup config")
 
 	deaconStartCmd.Flags().StringVar(&deaconAgentOverride, "agent", "", "Agent alias to run the Deacon with (overrides town default)")
 	deaconAttachCmd.Flags().StringVar(&deaconAgentOverride, "agent", "", "Agent alias to run the Deacon with (overrides town default)")
@@ -1219,6 +1222,19 @@ func runDeaconCleanupOrphans(cmd *cobra.Command, args []string) error {
 
 // runDeaconZombieScan finds and cleans zombie Claude processes not in active tmux sessions.
 func runDeaconZombieScan(cmd *cobra.Command, args []string) error {
+	// PATCH-009: Check auto-cleanup config when --auto flag is set
+	shouldCleanup := false
+	if zombieScanAuto {
+		townRoot, _ := workspace.FindFromCwdOrError()
+		if townRoot != "" {
+			settings, _ := config.LoadOrCreateTownSettings(config.TownSettingsPath(townRoot))
+			if settings != nil && settings.Zombie != nil && settings.Zombie.AutoCleanup {
+				shouldCleanup = true
+				fmt.Println("Auto-cleanup enabled via zombie.auto_cleanup config")
+			}
+		}
+	}
+
 	// Find zombies using tmux verification
 	zombies, err := util.FindZombieClaudeProcesses()
 	if err != nil {
@@ -1232,8 +1248,8 @@ func runDeaconZombieScan(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("%s Found %d zombie claude process(es)\n", style.Bold.Render("●"), len(zombies))
 
-	// In dry-run mode, just list them
-	if zombieScanDryRun {
+	// In dry-run mode or auto mode without config, just list them
+	if zombieScanDryRun || (zombieScanAuto && !shouldCleanup) {
 		for _, z := range zombies {
 			ageStr := fmt.Sprintf("%dm", z.Age/60)
 			fmt.Printf("  %s PID %d (%s) TTY=%s age=%s\n",

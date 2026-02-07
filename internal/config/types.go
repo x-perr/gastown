@@ -64,6 +64,10 @@ type TownSettings struct {
 	// Example: {"mayor": "claude-opus", "witness": "claude-haiku", "polecat": "claude-sonnet"}
 	RoleAgents map[string]string `json:"role_agents,omitempty"`
 
+	// Zombie configures automatic zombie polecat cleanup (PATCH-009).
+	// When enabled, idle polecats are auto-cleaned instead of filing warrants.
+	Zombie *ZombieConfig `json:"zombie,omitempty"`
+
 	// AgentEmailDomain is the domain used for agent git identity emails.
 	// Agent addresses like "gastown/crew/jack" become "gastown.crew.jack@{domain}".
 	// Default: "gastown.local"
@@ -85,6 +89,46 @@ func NewTownSettings() *TownSettings {
 type DaemonConfig struct {
 	HeartbeatInterval string `json:"heartbeat_interval,omitempty"` // e.g., "30s"
 	PollInterval      string `json:"poll_interval,omitempty"`      // e.g., "10s"
+}
+
+// ZombieConfig represents zombie polecat auto-cleanup settings (PATCH-009).
+// Controls automated cleanup of idle polecats with no hooked work.
+type ZombieConfig struct {
+	// AutoCleanup enables automatic cleanup of zombie polecats.
+	// When true, the Deacon will kill idle sessions instead of filing warrants.
+	// Default: false (warrants filed for Boot to handle)
+	AutoCleanup bool `json:"auto_cleanup,omitempty"`
+
+	// IdleThreshold is the duration a polecat must be idle before cleanup.
+	// Format: "2h", "30m", "1h30m". Default: "2h"
+	IdleThreshold string `json:"idle_threshold,omitempty"`
+
+	// Protected is a list of polecat names that should never be auto-cleaned.
+	// Useful for long-running or important polecats.
+	// Example: ["gastown/polecats/max", "myrig/polecats/sentinel"]
+	Protected []string `json:"protected,omitempty"`
+}
+
+// DefaultZombieIdleThreshold is the default idle time before a polecat is considered zombie.
+const DefaultZombieIdleThreshold = "2h"
+
+// ParseIdleThreshold parses the idle threshold string into a duration.
+func (z *ZombieConfig) ParseIdleThreshold() (time.Duration, error) {
+	threshold := z.IdleThreshold
+	if threshold == "" {
+		threshold = DefaultZombieIdleThreshold
+	}
+	return time.ParseDuration(threshold)
+}
+
+// IsProtected checks if a polecat name is in the protected list.
+func (z *ZombieConfig) IsProtected(polecatName string) bool {
+	for _, p := range z.Protected {
+		if p == polecatName {
+			return true
+		}
+	}
+	return false
 }
 
 // DaemonPatrolConfig represents the daemon patrol configuration (mayor/daemon.json).
