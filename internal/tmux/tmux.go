@@ -33,6 +33,10 @@ var (
 	ErrSessionNotFound = errors.New("session not found")
 )
 
+// claudeVersionRe matches Claude Code version numbers (e.g., "2.1.34").
+// Native installer names binaries by version, so pane command may be the version.
+var claudeVersionRe = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
+
 // Tmux wraps tmux operations.
 type Tmux struct{}
 
@@ -909,6 +913,19 @@ func processMatchesNames(pid string, names []string) bool {
 			return true
 		}
 	}
+
+	// PATCH-008: Check if comm looks like a Claude Code version number.
+	// Native installer names binaries by version (e.g., "2.1.34"), so when
+	// we expect "node" or "claude" but see a version number, treat it as Claude.
+	for _, name := range names {
+		if name == "node" || name == "claude" {
+			if claudeVersionRe.MatchString(comm) {
+				return true
+			}
+			break
+		}
+	}
+
 	return false
 }
 
@@ -1171,6 +1188,17 @@ func (t *Tmux) IsRuntimeRunning(session string, processNames []string) bool {
 	for _, name := range processNames {
 		if cmd == name {
 			return true
+		}
+	}
+
+	// PATCH-008: Check if pane command looks like a Claude Code version number.
+	// Native installer names binaries by version (e.g., "2.1.34").
+	for _, name := range processNames {
+		if name == "node" || name == "claude" {
+			if claudeVersionRe.MatchString(cmd) {
+				return true
+			}
+			break
 		}
 	}
 	// Check for child processes if pane command is a shell or unrecognized.
